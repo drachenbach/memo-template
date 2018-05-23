@@ -1,0 +1,128 @@
+\section{Introduction}
+\label{sec:introduction}
+This memo is on Deepmind's \textsc{WaveNet} \parencite{oord_wavenet:_2016}, a generative model for raw audio. The cool thing is that it works on \textit{raw audio} which makes it really flexible. Use cases range from text-to-speech systems, as in Google's Duplex demo\footnote{\url{https://ai.googleblog.com/2018/05/duplex-ai-system-for-natural-conversation.html}}, over music generation \parencite{mor_universal_2018} to speech recognition. It is also usable in productive systems through the Google Cloud\footnote{\url{https://cloud.google.com/text-to-speech/}}. 
+
+\section{Problem Setting}
+\label{sec:problem-setting}
+Figure \ref{fig:wave} shows an example of how audio looks like. It is basically a real-valued time series. The major challenge in modeling speech is its high resolution: Usually, audio should be at 16 kHz to sound natural. That means, it has 16,000 values per second. This high resolution scared a lot of researchers to directly work on the raw audio. However, \textsc{WaveNet} did.\\
+
+\begin{figure}[h]
+	\centering
+		\includegraphics[width=\textwidth]{./img/wave.png}
+	\caption{One second of generated speech \parencite{oord_wavenet:_2016}.}
+	\label{fig:wave}
+\end{figure}
+
+\subsection{Text-to-Speech Background}
+\label{sec:text-to-speech}
+First some historical background. Text-to-speech (TTS) \enquote{can be viewed as a sequence-to-sequence mapping problem} \parencite{oord_wavenet:_2016}. You take in a sequence of text (discrete symbols) and output a time series of real-values. A typical pipeline has two steps:
+\begin{enumerate}
+	\item Text analysis: Perform NLP steps (sentence and word segmentation, normalization, part-of-speech tagging etc.) to transform a word sequence into a phoneme sequence. A phoneme is a basic sound of which natural languages are composed of. Additionally, it should provide linguistic contexts (e.g. higher pitch at the end of a question).
+	\item Speech synthesis: Take the context-dependent phoneme sequence and synthesize speech waveform.
+\end{enumerate}
+Speech synthesis has two major approaches:
+\begin{enumerate}
+	\item Concatenative systems: Rely on a huge database of units of speech samples. Basically, it concatenates the right samples based on the phoneme sequence.
+	\item Parametric, model-based systems: Rely on a huge database of annotated speech (text+audio) and so-called \textit{vocoders} (``speech generation machines''). Figure \ref{fig:parametric-models} depicts the general approach. First, extract vocoder features (some statistical, audio-specific features) from speech and linguistic features from the text. Then train a generative model (hidden Markov models, FFNNs, RNNs...) using MLE.
+\end{enumerate}
+\enquote{The statistical parametric approach offers various advantages over the concatenative one such as small footprint and flexibility to change its voice characteristics. However, its subjective naturalness is often significantly worse than that of the concatenative approach; synthesized speech often sounds muffled and has artifacts} \parencite{oord_wavenet:_2016}.\\
+\textsc{WaveNet} is also a parametric model, however it skips all the parts with the ``manual'' feature extraction, vocoder etc. and instead works on the \textit{raw audio}. This is some kind of end-to-end learning which deep learning is famous for: Let the model figure out which features could be helpful without manually encoding them.
+
+\begin{figure}[h]
+	\centering
+		\includegraphics[width=\textwidth]{./img/parametric-models.png}
+	\caption{Outline of statistical parametric speech synthesis \parencite{oord_wavenet:_2016}.}
+	\label{fig:parametric-models}
+\end{figure}
+
+\section{\textsc{WaveNet}}
+\label{wavenet}
+\textsc{WaveNet} is a fully probabilistic (predicts probability distributions), autoregressive (generated output relies on previously generated output -- works with its own predictions), fully convolutional (heavily relies on convolutions) model operating directly on the raw audio waveform. It models the joint probability of a waveform $x = \{x_1, ..., x_T\}$ as
+\begin{equation}
+	p(x) = \prod\limits_{t=1}^{T} p(x_t \vert x_1, ..., x_{t-1}),
+	\label{eq:joint-probability}
+\end{equation}
+so each step relies on all previous steps (not in the future, obviously). These conditional probabilities are modeled using (very) deep convolutional neural networks. They do not use pooling. Basically, the CNN outputs a categorical distribution over the next value with a softmax layer (given all the previous values). They use MLE to learn the parameters.\\
+
+\subsection{Key Challenge}
+\label{sec:key-challenge}
+The key challenge of modeling raw audio is the high resolution as mentioned in Section \ref{sec:problem-setting}. Usually, RNNs excel at modeling time series. However, there are computational bottlenecks, especially for long sequences. And audio sequences are really long (e.g. compared to a sentence). Therefore, they use CNNs. In CNNs, each convolutional filter (``local feature detector'') has a so-called receptive field: If you draw the analogy to a flashlight, the receptive field is the region where it sheds light on the data. For CNNs in computer vision, this might not be problematic because of the comparably low resolution of images. However, the receptive fields in audio modeling have to be much larger (e.g. 16,000 to have access to one second of raw audio). \textcite{oord_wavenet:_2016} use several tricks to increase the receptive field. This is crucial to be able to model long-range dependencies.
+
+\subsection{Dilated Causal Convolutions}
+\label{sec:dilated-causal-convolutions}
+Instead of ``vanilla'' convolutions, they use dilated causal convolutions.\\
+\textit{Causal} means that the model should respect the causality of the data, i.e. it cannot look into the future (see Equation \ref{eq:joint-probability}). They are faster to train than RNNs due to the lack of recurrent connections. The major drawback is that it requires many layers to increase the receptive field. In Figure \ref{fig:causal-convolution}, the receptive field is 5 = \#layers + filter length - 1.\\
+To overcome this issue, they use \textit{dilated} causal convolutions as depicted in Figure \ref{fig:dilated-causal-convolution}. Check their website\footnote{\url{https://deepmind.com/blog/wavenet-generative-model-raw-audio/}} for a nice GIF. Here, the convolution filters have ``holes'', thus they skip some input values.\\
+In the paper, they define blocks of layers where they double the dilation for every layer (1, 2, 4, ..., 256, 512). This leads to an exponential growth of the receptive field. These blocks can be stacked to increase model capacity (making the model more expressive).
+
+\begin{figure}[h]
+	\centering
+		\includegraphics[width=\textwidth]{./img/causal-convolutions.png}
+	\caption{Visualization of a stack of causal convolutional layers \parencite{oord_wavenet:_2016}.}
+	\label{fig:causal-convolution}
+\end{figure}
+
+\begin{figure}[h]
+	\centering
+		\includegraphics[width=\textwidth]{./img/dilated-causal-convolution.png}
+	\caption{Visualization of a stack of \textit{dilated} causal convolutional layers \parencite{oord_wavenet:_2016}.}
+	\label{fig:dilated-causal-convolution}
+\end{figure}
+
+\subsection{Outputs: Softmax Distribution}
+\label{sec:softmax}
+Although, the audio data is continuous, the paper uses a discrete softmax distribution for distribution. The audio data is typically stored as integers anyways. \textcite{oord_pixel_2016} showed that this simplification can work as the categorical distribution is more flexible in the sense that it makes no assumptions and can easily model arbitrary distributions. 16-bit integers can take 65,536 values. This is too much for softmax. So, the paper quantizes the values in 256 buckets using a $\mu$-law companding transformation. This is some form of non-linear transformation that tends to reconstruct audio much better than linear transformations.
+
+\subsection{Activation Function}
+\label{sec:activation-function}
+No ReLU here. They use a so-called \textit{gated activation}:
+\[
+	z = tanh(W_{f,k} \star x) \odot \sigma(W_{g,k} \star x).
+\]
+$z$ is the output, $\star$ is convolution, $\odot$ is element-wise multiplication, $k$ is the layer index, $f$ is the filter, $g$ is the gate. Intuitively, the filter $f$ proposes a new value between -1 and 1. The gate determines which values to keep using a sigmoid in the range of 0 and 1. Reminds me a bit of GRUs.
+
+\subsection{Architecture}
+\label{sec:architecure}
+Figure \ref{fig:architecture} shows the overall architecture. In each layer, they use residual connections \parencite{he_deep_2016}. Intuitively, they provide a shortcut around certain computations (like the activations). This speeds up convergence and enables the training of much deeper models. Additionally, they use skip connections that skip entire layers.
+
+\begin{figure}[h]
+	\centering
+		\includegraphics[width=\textwidth]{./img/architecture.png}
+	\caption{Overview of the residual block and the entire architecture \parencite{oord_wavenet:_2016}.}
+	\label{fig:architecture}
+\end{figure}
+
+\subsection{Input Data}
+\label{sec:input-data}
+Here it gets interesting. So far, we only described how to model the raw audio. However, in TTS you obviously need the text in addition. Plus, you can add more stuff.\\
+They call the process of adding more data to the input \textit{conditioning} (because it is in the condition of our conditional probability). There are two variants:
+\begin{enumerate}
+	\item Global conditioning: Additional data that is same for the whole sequence. E.g., you can feed in a speaker ID in TTS or a genre in music generation.
+	\item Local conditioning: The input data changes over the course of the sequence. E.g., the accompanying text has to be aligned to the audio sequence.
+\end{enumerate}
+This is super cool and a huge advantage over previous models. E.g., \textsc{WaveNet} is able to model a dataset of over 100 speakers with a \textit{single} model -- you just have to feed the speaker ID. Furthermore, you could input something like mood, or maybe accents etc. and get creative.\\
+The text data is not fed directly, and no, they do not use embeddings here. Instead, they linguistic features that are derived from the input text using NLP.
+
+\subsection{Context Stacks}
+\label{sec:context-stacks}
+I did not really understand this concept. Somehow, they use \textit{context stacks} that cover a longer part of the audio signal.
+
+\section{Experiments}
+\label{sec:experiments}
+Just go to their website and listen to some examples, really impressive. They conduct experiments on different tasks.\\
+In \textit{multi-speaker speech generation}, they just generate some speech from a huge speech database (no text involved). So, the model produces some weird audio that sounds like human speech but has no meaning. Comparing this to generative NLP models (Karpathy's Shakespeare\footnote{\url{http://karpathy.github.io/2015/05/21/rnn-effectiveness/}}), text usually has some meaningful parts. The audio does not because of the receptive fields. In this task, it is 300 ms which corresponds to 2 to 3 phonemes (sounds) only.\\
+However, the conditioning on the speaker worked great. This shows, that \textsc{WaveNet} must have learned some internal representation that is shared between speakers.\\
+They evaluated TTS for North American English and Mandarin Chinese. Receptive field is 240 ms in this experiment\footnote{They additionally used logarithmic fundamental frequencies (log $F_0$) as input. No idea what this. Somehow helps with long-term dependencies as it is trained with a smaller resolution of 200 Hz (not kHz).}. Table \ref{tab:results} shows the results of the Mean Opinion Score (MOS). They asked people to rate the ``naturalness'' of the (generated) speech on a scale of 1 to 5. Of course, \textsc{WaveNet} is awesome and beats all others. It reduces the gap to human-level performance by over 50\%.\\
+They also generated music. Sounds quite harmonic. Key finding here was that this even requires a larger receptive field of several seconds to obtain satisfying results. Again, they used conditioning to additionally input stuff like genre, instrumentation, tempo, volume, and mood.\\
+Lastly, the evaluated speed recognition. I did not go into detail for this paragraph.
+
+\begin{table}[h]
+	\centering
+		\includegraphics[width=\textwidth]{./img/results.png}
+	\caption{Subjective 5-scale mean opinion scores of speech samples \parencite{oord_wavenet:_2016}.}
+	\label{tab:results}
+\end{table}
+
+\section{Conclusion}
+\label{sec:conclusion}
+\textsc{WaveNet} is awesome. Working on the raw audio is really challenging but produces impressive results.
